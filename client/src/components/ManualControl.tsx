@@ -10,6 +10,41 @@ export default function ManualControl() {
   const { isConnected, sendCommand } = usePlotter();
   const { toast } = useToast();
 
+  const sendDirectCommand = (command: any) => {
+    console.log("Sending direct command:", command);
+    
+    fetch('/api/direct-command', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ command })
+    })
+    .then(response => {
+      if (!response.ok) {
+        throw new Error(`Server returned ${response.status}`);
+      }
+      return response.json();
+    })
+    .then(data => {
+      if (data.success) {
+        console.log("Direct API command success:", data.message);
+      } else {
+        throw new Error(data.error || "Failed to send command");
+      }
+    })
+    .catch(err => {
+      console.error("Direct API command failed, falling back to WebSocket:", err.message);
+      toast({
+        title: "Command Error",
+        description: err.message,
+        variant: "destructive"
+      });
+      // Fallback to WebSocket method
+      sendCommand(command);
+    });
+  };
+
   const handleMovePolar = () => {
     if (!isConnected) {
       toast({
@@ -29,7 +64,9 @@ export default function ManualControl() {
       return;
     }
 
-    sendCommand({ type: 'MOVE', angle, radius });
+    // Try direct API first, fall back to WebSocket
+    const command = { type: 'MOVE', angle, radius };
+    sendDirectCommand(command);
   };
 
   const handleRelativeMove = (direction: string) => {

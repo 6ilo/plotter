@@ -8,6 +8,12 @@ import { plotterSerial } from "./serial";
 import { ClientToServerEvents, ServerToClientEvents, PlotterState } from "@shared/types";
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Create HTTP server
+  const httpServer = createServer(app);
+
+  // Setup WebSocket server
+  const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
+  
   // API routes
   app.get('/api/ports', async (req, res) => {
     try {
@@ -39,6 +45,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       log(`Direct connection result: ${connected ? 'SUCCESS' : 'FAILED'}`, 'api');
       
       if (connected) {
+        // Broadcast connection to all WebSocket clients
+        wss.clients.forEach(client => {
+          if (client.readyState === WebSocket.OPEN) {
+            log('Broadcasting connection status to WebSocket client', 'api');
+            sendToClient(client, 'connection_status', {
+              connected: true,
+              port: port,
+              baudRate: rate
+            });
+            sendToClient(client, 'plotter_state', { state: PlotterState.READY });
+            sendToClient(client, 'log_message', {
+              type: 'info',
+              message: `Connected to ${port} at ${rate} baud via direct API`
+            });
+          }
+        });
+        
         return res.json({ 
           success: true, 
           message: `Connected to ${port} at ${rate} baud` 
@@ -64,9 +87,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
       log('Direct disconnect request received', 'api');
       plotterSerial.disconnect();
       log('Device disconnected successfully via direct API', 'api');
+      
+      // Broadcast disconnection to all WebSocket clients
+      wss.clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+          log('Broadcasting disconnection status to WebSocket client', 'api');
+          sendToClient(client, 'connection_status', { connected: false });
+          sendToClient(client, 'plotter_state', { state: PlotterState.DISCONNECTED });
+          sendToClient(client, 'log_message', {
+            type: 'info',
+            message: 'Disconnected from device via direct API'
+          });
+        }
+      });
+      
       res.json({ success: true, message: 'Disconnected successfully' });
     } catch (error: any) {
       log(`Direct disconnect error: ${error.message}`, 'api');
+      res.status(500).json({ 
+        success: false, 
+        error: error.message || 'An unknown error occurred' 
+      });
+    }
+  });
+  
+  // Direct command endpoint - bypasses WebSocket
+  app.post('/api/direct-command', (req, res) => {
+    try {
+      log(`Direct command request received: ${JSON.stringify(req.body)}`, 'api');
+      const { command } = req.body;
+      
+      if (!command) {
+        log('Direct command failed: Missing command data', 'api');
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Command data is required' 
+        });
+      }
+      
+      if (!plotterSerial.isPortConnected()) {
+        log('Direct command failed: Not connected to device', 'api');
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Not connected to device' 
+        });
+      }
+      
+      plotterSerial.sendCommand(command);
+      log(`Command sent successfully via direct API: ${JSON.stringify(command)}`, 'api');
+      
+      res.json({ 
+        success: true, 
+        message: 'Command sent successfully' 
+      });
+    } catch (error: any) {
+      log(`Direct command error: ${error.message}`, 'api');
       res.status(500).json({ 
         success: false, 
         error: error.message || 'An unknown error occurred' 
@@ -91,12 +166,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: 'Failed to create settings' });
     }
   });
-
-  // Create HTTP server
-  const httpServer = createServer(app);
-
-  // Setup WebSocket server
-  const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
 
   wss.on('connection', (ws) => {
     log('WebSocket client connected', 'ws');
