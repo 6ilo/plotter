@@ -1,0 +1,458 @@
+#include <AccelStepper.h>
+#include <math.h>
+
+// ------------------------------------------------
+// Pin Definitions (for your CNC shield slots)
+// ------------------------------------------------
+#define ANGULAR_STEP_PIN 2
+#define ANGULAR_DIR_PIN  5
+#define RADIAL_STEP_PIN  3
+#define RADIAL_DIR_PIN   6
+
+// Optional: Use an ENABLE pin if your A4988 drivers require it.
+#define ENABLE_PIN       8
+
+// Emergency Stop Button (configured with internal pull-up; pressed = LOW)
+#define EMERGENCY_STOP_PIN 7
+
+// ------------------------------------------------
+// Soft Limits (Polar Coordinates)
+// ------------------------------------------------
+const float MIN_ANGLE  = 0.0;    // degrees
+const float MAX_ANGLE  = 360.0;  // degrees
+const float MIN_RADIUS = 0.0;    // mm
+const float MAX_RADIUS = 100.0;  // mm (adjust as needed)
+
+// ------------------------------------------------
+// Motor and Conversion Parameters
+// ------------------------------------------------
+#define MICROSTEPPING 16       // According to your A4988 jumper settings
+#define MOTOR_STEPS   200      // Typical for a NEMA 17
+
+const long ANGULAR_STEPS_PER_REV = MOTOR_STEPS * MICROSTEPPING;
+const float RADIAL_STEPS_PER_MM = 100.0; // Calibrate this based on your mechanism
+
+// ------------------------------------------------
+// Motion Parameters (modifiable via the SPEED command)
+// ------------------------------------------------
+float currentMaxSpeedAngular = 600.0;     // steps/sec
+float currentAccelAngular    = 150.0;     // steps/sec^2
+float currentMaxSpeedRadial  = 600.0;      // steps/sec
+float currentAccelRadial     = 150.0;      // steps/sec^2
+
+// ------------------------------------------------
+// Global State Variables
+// ------------------------------------------------
+enum PlotterState { STATE_READY, STATE_DRAWING, STATE_ERROR };
+PlotterState plotterState = STATE_READY;
+
+// Current polar position (global variables)
+float currentAngleDeg = 0.0;
+float currentRadiusMM = 0.0;
+
+// ------------------------------------------------
+// Create Stepper Objects (using DRIVER interface)
+// ------------------------------------------------
+AccelStepper stepperAngular(AccelStepper::DRIVER, ANGULAR_STEP_PIN, ANGULAR_DIR_PIN);
+AccelStepper stepperRadial(AccelStepper::DRIVER, RADIAL_STEP_PIN, RADIAL_DIR_PIN);
+
+// ------------------------------------------------
+// Helper Functions: Conversion
+// ------------------------------------------------
+long convertAngleToSteps(float angleDeg) {
+  return (long)(angleDeg * (float)ANGULAR_STEPS_PER_REV / 360.0);
+}
+
+long convertRadiusToSteps(float radiusMM) {
+  return (long)(radiusMM * RADIAL_STEPS_PER_MM);
+}
+
+// Convert polar (angle, radius) to Cartesian (x, y)
+void polarToCartesian(float angleDeg, float radiusMM, float &x, float &y) {
+  float rad = angleDeg * (PI / 180.0);
+  x = radiusMM * cos(rad);
+  y = radiusMM * sin(rad);
+}
+
+// Convert Cartesian (x, y) to polar (angle in degrees, radius)
+void cartesianToPolar(float x, float y, float &angleDeg, float &radiusMM) {
+  radiusMM = sqrt(x * x + y * y);
+  angleDeg = atan2(y, x) * (180.0 / PI);
+  if (angleDeg < 0) angleDeg += 360.0;
+}
+
+// ------------------------------------------------
+// Move to Specified Polar Coordinates
+// ------------------------------------------------
+void moveToPolar(float targetAngleDeg, float targetRadiusMM) {
+  // Check soft limits.
+  if (targetAngleDeg < MIN_ANGLE || targetAngleDeg > MAX_ANGLE ||
+      targetRadiusMM < MIN_RADIUS || targetRadiusMM > MAX_RADIUS) {
+    Serial.println("Error: Target coordinates out of soft limits!");
+    return;
+  }
+  
+  long targetAngularSteps = convertAngleToSteps(targetAngleDeg);
+  long targetRadialSteps = convertRadiusToSteps(targetRadiusMM);
+  
+  Serial.print("Moving to: Angle ");
+  Serial.print(targetAngleDeg);
+  Serial.print(" deg (");
+  Serial.print(targetAngularSteps);
+  Serial.print(" steps), Radius ");
+  Serial.print(targetRadiusMM);
+  Serial.print(" mm (");
+  Serial.print(targetRadialSteps);
+  Serial.println(" steps)");
+  
+  stepperAngular.moveTo(targetAngularSteps);
+  stepperRadial.moveTo(targetRadialSteps);
+  
+  currentAngleDeg = targetAngleDeg;
+  currentRadiusMM = targetRadiusMM;
+}
+
+// ------------------------------------------------
+// Relative Move in Cartesian Coordinates (dx, dy in mm)
+// ------------------------------------------------
+void moveRelativeXY(float dx, float dy) {
+  float curX, curY;
+  polarToCartesian(currentAngleDeg, currentRadiusMM, curX, curY);
+  
+  float newX = curX + dx;
+  float newY = curY + dy;
+  
+  float newAngle, newRadius;
+  cartesianToPolar(newX, newY, newAngle, newRadius);
+  
+  if (newRadius < MIN_RADIUS || newRadius > MAX_RADIUS) {
+    Serial.println("Error: Relative move would exceed radial soft limits!");
+    return;
+  }
+  
+  Serial.print("Relative move: dx=");
+  Serial.print(dx);
+  Serial.print(" mm, dy=");
+  Serial.print(dy);
+  Serial.print(" mm -> New polar pos: Angle=");
+  Serial.print(newAngle);
+  Serial.print(" deg, Radius=");
+  Serial.print(newRadius);
+  Serial.println(" mm");
+  
+  moveToPolar(newAngle, newRadius);
+}
+
+// ------------------------------------------------
+// Print Current Position (Polar & Cartesian)
+// ------------------------------------------------
+void printStatus() {
+  float curX, curY;
+  polarToCartesian(currentAngleDeg, currentRadiusMM, curX, curY);
+  Serial.print("Status - Polar: Angle=");
+  Serial.print(currentAngleDeg);
+  Serial.print(" deg, Radius=");
+  Serial.print(currentRadiusMM);
+  Serial.print(" mm; Cartesian: X=");
+  Serial.print(curX);
+  Serial.print(" mm, Y=");
+  Serial.print(curY);
+  Serial.println(" mm");
+}
+
+// ------------------------------------------------
+// Homing Function: Move to (0,0) using slow homing speeds
+// ------------------------------------------------
+void homePlotter() {
+  Serial.println("Starting homing routine...");
+  // Save current speed settings.
+  float prevMaxSpeedA = stepperAngular.maxSpeed();
+  float prevAccelA    = stepperAngular.acceleration();
+  float prevMaxSpeedR = stepperRadial.maxSpeed();
+  float prevAccelR    = stepperRadial.acceleration();
+  
+  // Set slow homing speeds.
+  float homingSpeed = 100.0;  // steps/sec
+  float homingAccel = 50.0;   // steps/sec^2
+  stepperAngular.setMaxSpeed(homingSpeed);
+  stepperAngular.setAcceleration(homingAccel);
+  stepperRadial.setMaxSpeed(homingSpeed);
+  stepperRadial.setAcceleration(homingAccel);
+  
+  // Command move to home (0 deg, 0 mm).
+  moveToPolar(0.0, 0.0);
+  while (stepperAngular.distanceToGo() != 0 || stepperRadial.distanceToGo() != 0) {
+    stepperAngular.run();
+    stepperRadial.run();
+  }
+  
+  // Restore previous speed settings.
+  stepperAngular.setMaxSpeed(prevMaxSpeedA);
+  stepperAngular.setAcceleration(prevAccelA);
+  stepperRadial.setMaxSpeed(prevMaxSpeedR);
+  stepperRadial.setAcceleration(prevAccelR);
+  
+  Serial.println("Homing complete. Home position set to (0,0).");
+}
+
+// ------------------------------------------------
+// Adjust Speed Function: Change max speed and acceleration
+// Command: SPEED <maxSpeedAngular> <accelAngular> <maxSpeedRadial> <accelRadial>
+// ------------------------------------------------
+void adjustSpeed(float newMaxSpeedAngular, float newAccelAngular, float newMaxSpeedRadial, float newAccelRadial) {
+  currentMaxSpeedAngular = newMaxSpeedAngular;
+  currentAccelAngular = newAccelAngular;
+  currentMaxSpeedRadial = newMaxSpeedRadial;
+  currentAccelRadial = newAccelRadial;
+  
+  stepperAngular.setMaxSpeed(currentMaxSpeedAngular);
+  stepperAngular.setAcceleration(currentAccelAngular);
+  stepperRadial.setMaxSpeed(currentMaxSpeedRadial);
+  stepperRadial.setAcceleration(currentAccelRadial);
+  
+  Serial.println("Speed settings updated:");
+  Serial.print("Angular: MaxSpeed=");
+  Serial.print(currentMaxSpeedAngular);
+  Serial.print(" steps/sec, Accel=");
+  Serial.print(currentAccelAngular);
+  Serial.println(" steps/sec^2");
+  
+  Serial.print("Radial: MaxSpeed=");
+  Serial.print(currentMaxSpeedRadial);
+  Serial.print(" steps/sec, Accel=");
+  Serial.print(currentAccelRadial);
+  Serial.println(" steps/sec^2");
+}
+
+// ------------------------------------------------
+// Serial Command Parsing
+// ------------------------------------------------
+void parseSerialCommand() {
+  String input = Serial.readStringUntil('\n');
+  input.trim();
+  if (input.length() == 0) return;
+  
+  Serial.print("Received command: ");
+  Serial.println(input);
+  
+  // Command list:
+  //   MOVE <angle> <radius>    : Absolute move in polar coordinates.
+  //   DRAW                     : Draw a circle (50 mm radius) pattern.
+  //   SQUARE                   : Draw a 4x4 cm square.
+  //   AREA                     : Draw an outline of the full drawing area.
+  //   X<value> / Y<value>       : Relative move in X or Y (mm).
+  //   STATUS                   : Print current position.
+  //   TEST                     : Execute a small test move.
+  //   SPEED <Amax> <Aacc> <Rmax> <Racc> : Adjust speed (angular max, angular accel, radial max, radial accel).
+  //   HOME                     : Execute homing routine.
+  //   ESTOP                    : Emergency stop.
+  //   RESET                    : Clear error state.
+  
+  if (input.startsWith("MOVE")) {
+    int firstSpace = input.indexOf(' ');
+    if (firstSpace > 0) {
+      String params = input.substring(firstSpace + 1);
+      params.trim();
+      int spaceIndex = params.indexOf(' ');
+      if (spaceIndex > 0) {
+        String angleStr = params.substring(0, spaceIndex);
+        String radiusStr = params.substring(spaceIndex + 1);
+        float angle = angleStr.toFloat();
+        float radius = radiusStr.toFloat();
+        moveToPolar(angle, radius);
+      } else {
+        Serial.println("Error: Invalid MOVE command. Format: MOVE <angle> <radius>");
+      }
+    }
+    return;
+  }
+  
+  if (input.equalsIgnoreCase("DRAW")) {
+    Serial.println("Drawing circle pattern (50 mm radius)...");
+    for (float a = 0; a < 360.0; a += 10.0) {
+      moveToPolar(a, 50.0);
+      while (stepperAngular.distanceToGo() != 0 || stepperRadial.distanceToGo() != 0) {
+        stepperAngular.run();
+        stepperRadial.run();
+      }
+      delay(20);
+    }
+    Serial.println("Circle drawing complete.");
+    return;
+  }
+  
+  if (input.equalsIgnoreCase("SQUARE")) {
+    Serial.println("Drawing 4x4 cm square pattern...");
+    const int vertexCount = 5;
+    float vertices[vertexCount][2] = {
+      {20.0, 20.0},
+      {60.0, 20.0},
+      {60.0, 60.0},
+      {20.0, 60.0},
+      {20.0, 20.0}  // Closing the square.
+    };
+    for (int i = 0; i < vertexCount; i++) {
+      float x = vertices[i][0], y = vertices[i][1];
+      float angle, radius;
+      cartesianToPolar(x, y, angle, radius);
+      moveToPolar(angle, radius);
+      while (stepperAngular.distanceToGo() != 0 || stepperRadial.distanceToGo() != 0) {
+        stepperAngular.run();
+        stepperRadial.run();
+      }
+      delay(20);
+    }
+    Serial.println("Square drawing complete.");
+    return;
+  }
+  
+  if (input.equalsIgnoreCase("AREA")) {
+    Serial.println("Drawing full drawing area outline (circle at MAX_RADIUS)...");
+    for (float a = 0; a < 360.0; a += 10.0) {
+      moveToPolar(a, MAX_RADIUS);
+      while (stepperAngular.distanceToGo() != 0 || stepperRadial.distanceToGo() != 0) {
+        stepperAngular.run();
+        stepperRadial.run();
+      }
+      delay(20);
+    }
+    Serial.println("Area outline drawing complete.");
+    return;
+  }
+  
+  if (input.startsWith("X") || input.startsWith("x")) {
+    String valueStr = input.substring(1);
+    valueStr.trim();
+    float dx = valueStr.toFloat();
+    moveRelativeXY(dx, 0);
+    return;
+  }
+  if (input.startsWith("Y") || input.startsWith("y")) {
+    String valueStr = input.substring(1);
+    valueStr.trim();
+    float dy = valueStr.toFloat();
+    moveRelativeXY(0, dy);
+    return;
+  }
+  
+  if (input.equalsIgnoreCase("STATUS")) {
+    printStatus();
+    return;
+  }
+  
+  if (input.equalsIgnoreCase("TEST")) {
+    Serial.println("Executing test move: advancing 10 deg and 10 mm...");
+    moveToPolar(currentAngleDeg + 10.0, currentRadiusMM + 10.0);
+    return;
+  }
+  
+  if (input.startsWith("SPEED")) {
+    // Expected format: SPEED <Amax> <Aacc> <Rmax> <Racc>
+    int firstSpace = input.indexOf(' ');
+    if (firstSpace > 0) {
+      String params = input.substring(firstSpace + 1);
+      params.trim();
+      int space1 = params.indexOf(' ');
+      int space2 = params.indexOf(' ', space1 + 1);
+      int space3 = params.indexOf(' ', space2 + 1);
+      if (space1 > 0 && space2 > 0 && space3 > 0) {
+        String aMaxStr = params.substring(0, space1);
+        String aAccStr = params.substring(space1 + 1, space2);
+        String rMaxStr = params.substring(space2 + 1, space3);
+        String rAccStr = params.substring(space3 + 1);
+        float aMax = aMaxStr.toFloat();
+        float aAcc = aAccStr.toFloat();
+        float rMax = rMaxStr.toFloat();
+        float rAcc = rAccStr.toFloat();
+        adjustSpeed(aMax, aAcc, rMax, rAcc);
+      } else {
+        Serial.println("Error: Invalid SPEED command. Format: SPEED <Amax> <Aacc> <Rmax> <Racc>");
+      }
+    }
+    return;
+  }
+  
+  if (input.equalsIgnoreCase("HOME")) {
+    homePlotter();
+    return;
+  }
+  
+  if (input.equalsIgnoreCase("ESTOP")) {
+    Serial.println("Emergency Stop Activated via command!");
+    plotterState = STATE_ERROR;
+    stepperAngular.stop();
+    stepperRadial.stop();
+    return;
+  }
+  
+  if (input.equalsIgnoreCase("RESET")) {
+    if (plotterState == STATE_ERROR) {
+      Serial.println("Resetting emergency stop. System is READY.");
+      plotterState = STATE_READY;
+    } else {
+      Serial.println("System is already READY.");
+    }
+    return;
+  }
+  
+  Serial.println("Error: Unknown command.");
+}
+
+// ------------------------------------------------
+// Setup Function
+// ------------------------------------------------
+void setup() {
+  Serial.begin(115200);
+  Serial.println("Robust Polar Plotter Firmware Starting...");
+  
+  // Set up the optional ENABLE pin.
+  pinMode(ENABLE_PIN, OUTPUT);
+  digitalWrite(ENABLE_PIN, LOW); // LOW to enable A4988 outputs
+  
+  // Set up emergency stop pin (internal pull-up)
+  pinMode(EMERGENCY_STOP_PIN, INPUT_PULLUP);
+  
+  // Initialize steppers with current speed settings.
+  stepperAngular.setMaxSpeed(currentMaxSpeedAngular);
+  stepperAngular.setAcceleration(currentAccelAngular);
+  stepperAngular.setCurrentPosition(0);
+  
+  stepperRadial.setMaxSpeed(currentMaxSpeedRadial);
+  stepperRadial.setAcceleration(currentAccelRadial);
+  stepperRadial.setCurrentPosition(0);
+  
+  plotterState = STATE_READY;
+  Serial.println("System is READY.");
+  
+  // Optional startup test move.
+  Serial.println("Performing startup test move: to 10 deg, 10 mm.");
+  moveToPolar(10.0, 10.0);
+}
+
+// ------------------------------------------------
+// Main Loop
+// ------------------------------------------------
+void loop() {
+  // Check emergency stop button (active LOW).
+  if (digitalRead(EMERGENCY_STOP_PIN) == LOW) {
+    if (plotterState != STATE_ERROR) {
+      Serial.println("Emergency Stop Activated!");
+      plotterState = STATE_ERROR;
+      stepperAngular.stop();
+      stepperRadial.stop();
+    }
+  }
+  
+  // Process incoming serial commands.
+  if (Serial.available() > 0) {
+    parseSerialCommand();
+  }
+  
+  // Run steppers if system is READY or DRAWING.
+  if (plotterState == STATE_READY || plotterState == STATE_DRAWING) {
+    stepperAngular.run();
+    stepperRadial.run();
+  }
+  
+  // In ERROR state, wait for a RESET command.
+}
