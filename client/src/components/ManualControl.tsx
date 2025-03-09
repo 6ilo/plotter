@@ -92,8 +92,8 @@ export default function ManualControl() {
       case 'SW': dx = -stepSize; dy = -stepSize; break;
     }
     
-    if (dx !== 0) sendCommand({ type: 'X', value: dx });
-    if (dy !== 0) sendCommand({ type: 'Y', value: dy });
+    if (dx !== 0) sendDirectCommand({ type: 'X', value: dx });
+    if (dy !== 0) sendDirectCommand({ type: 'Y', value: dy });
   };
 
   const handleHome = () => {
@@ -106,7 +106,7 @@ export default function ManualControl() {
       return;
     }
 
-    sendCommand({ type: 'HOME' });
+    sendDirectCommand({ type: 'HOME' });
   };
 
   const handleStatus = () => {
@@ -119,7 +119,7 @@ export default function ManualControl() {
       return;
     }
 
-    sendCommand({ type: 'STATUS' });
+    sendDirectCommand({ type: 'STATUS' });
   };
 
   return (

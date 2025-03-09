@@ -15,11 +15,39 @@ export default function EmergencyStop() {
       return;
     }
 
-    sendCommand({ type: 'ESTOP' });
-    toast({
-      title: "Emergency Stop",
-      description: "Emergency stop triggered! Use RESET to clear error state.",
-      variant: "destructive"
+    // Use direct API for emergency stop - this is critical
+    fetch('/api/direct-command', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        command: { type: 'ESTOP' }
+      })
+    })
+    .then(response => {
+      if (!response.ok) {
+        throw new Error(`Server returned ${response.status}`);
+      }
+      return response.json();
+    })
+    .then(data => {
+      console.log("Emergency stop initiated via direct API");
+      toast({
+        title: "Emergency Stop",
+        description: "Emergency stop triggered! Use RESET to clear error state.",
+        variant: "destructive"
+      });
+    })
+    .catch(err => {
+      console.error("Direct API emergency stop failed, falling back to WebSocket:", err.message);
+      // Fallback to WebSocket as last resort
+      sendCommand({ type: 'ESTOP' });
+      toast({
+        title: "Emergency Stop",
+        description: "Emergency stop triggered (fallback method)! Use RESET to clear error state.",
+        variant: "destructive"
+      });
     });
   };
 

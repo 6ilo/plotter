@@ -5,6 +5,41 @@ export default function TestPatterns() {
   const { isConnected, sendCommand } = usePlotter();
   const { toast } = useToast();
 
+  // Function to send commands via direct API with WebSocket fallback
+  const sendDirectCommand = (command: any) => {
+    console.log("Sending direct test pattern command:", command);
+    
+    fetch('/api/direct-command', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ command })
+    })
+    .then(response => {
+      if (!response.ok) {
+        throw new Error(`Server returned ${response.status}`);
+      }
+      return response.json();
+    })
+    .then(data => {
+      if (data.success) {
+        console.log("Direct API test pattern success:", data.message);
+        toast({
+          title: "Pattern started",
+          description: `Test pattern initiated successfully`,
+        });
+      } else {
+        throw new Error(data.error || "Failed to send command");
+      }
+    })
+    .catch(err => {
+      console.error("Direct API test pattern failed, falling back to WebSocket:", err.message);
+      // Fallback to WebSocket method
+      sendCommand(command);
+    });
+  };
+
   const handleTestPattern = (pattern: string) => {
     if (!isConnected) {
       toast({
@@ -15,20 +50,26 @@ export default function TestPatterns() {
       return;
     }
 
+    let command;
     switch (pattern) {
       case 'CIRCLE':
-        sendCommand({ type: 'DRAW' });
+        command = { type: 'DRAW' };
         break;
       case 'SQUARE':
-        sendCommand({ type: 'SQUARE' });
+        command = { type: 'SQUARE' };
         break;
       case 'AREA':
-        sendCommand({ type: 'AREA' });
+        command = { type: 'AREA' };
         break;
       case 'TEST':
-        sendCommand({ type: 'TEST' });
+        command = { type: 'TEST' };
         break;
+      default:
+        return;
     }
+    
+    // Send via direct API
+    sendDirectCommand(command);
   };
 
   return (
