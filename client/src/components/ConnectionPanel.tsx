@@ -4,33 +4,71 @@ import { useToast } from "@/hooks/use-toast";
 import { SerialPort } from "@shared/types";
 
 export default function ConnectionPanel() {
-  // Replace string array with SerialPort array to store more port information
   const [availablePorts, setAvailablePorts] = useState<SerialPort[]>([]);
   const [selectedPort, setSelectedPort] = useState<string>("");
   const [baudRate, setBaudRate] = useState<number>(115200);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   
   const { isConnected, currentPort, connectToPort, disconnectFromPort, refreshPorts } = usePlotter();
   const { toast } = useToast();
 
   useEffect(() => {
     handleRefreshPorts();
+    
+    // Poll for ports every 5 seconds when not connected
+    const intervalId = setInterval(() => {
+      if (!isConnected) {
+        handleRefreshPorts(true); // Silent refresh
+      }
+    }, 5000);
+    
+    return () => clearInterval(intervalId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isConnected]);
 
-  const handleRefreshPorts = async () => {
+  const handleRefreshPorts = async (silent = false) => {
+    if (!silent) {
+      setIsRefreshing(true);
+    }
+    
     try {
       const ports = await refreshPorts();
       setAvailablePorts(ports);
       
-      if (ports.length > 0 && !selectedPort) {
-        setSelectedPort(ports[0].path);
+      // If we have an Arduino-like port, prioritize it
+      const arduinoPort = ports.find(p => 
+        (p.manufacturer?.toLowerCase().includes('arduino') || false) ||
+        (p.path?.toLowerCase().includes('arduino') || false)
+      );
+      
+      // If we have an FTDI port, use it as a fallback
+      const ftdiPort = ports.find(p => 
+        (p.manufacturer?.toLowerCase().includes('ftdi') || false) ||
+        (p.path?.toLowerCase().includes('usbserial') || false)
+      );
+      
+      // Set a detected port if available and not already selected
+      if ((!selectedPort || !ports.some(p => p.path === selectedPort)) && ports.length > 0) {
+        if (arduinoPort) {
+          setSelectedPort(arduinoPort.path);
+        } else if (ftdiPort) {
+          setSelectedPort(ftdiPort.path);
+        } else {
+          setSelectedPort(ports[0].path);
+        }
       }
     } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to refresh ports",
-        variant: "destructive"
-      });
+      if (!silent) {
+        toast({
+          title: "Error",
+          description: "Failed to refresh ports",
+          variant: "destructive"
+        });
+      }
+    } finally {
+      if (!silent) {
+        setIsRefreshing(false);
+      }
     }
   };
 
@@ -59,91 +97,178 @@ export default function ConnectionPanel() {
     }
   };
   
-  // Helper to get a friendly display name for a port
-  const getPortDisplay = (port: SerialPort) => {
-    if (port.displayName) {
-      return port.displayName;
+  // Format port display for Arduino IDE style
+  const formatPortDisplay = (port: SerialPort) => {
+    // Get the port name part
+    let portName = port.path;
+    
+    // For macOS, make it more readable
+    if (port.path.includes('/dev/')) {
+      portName = port.path.split('/dev/')[1];
     }
     
-    // If no display name is set, use the path
-    return port.path;
+    // Add device info if available
+    let deviceInfo = '';
+    
+    if (port.manufacturer) {
+      deviceInfo = port.manufacturer;
+    } else if (port.isAppleDevice) {
+      deviceInfo = 'Apple Device';
+    } else if (port.path.includes('usbmodem') || port.path.includes('ttyACM')) {
+      deviceInfo = 'Arduino or similar';
+    } else if (port.path.includes('usbserial') || port.path.includes('wchusbserial')) {
+      deviceInfo = 'USB Serial';
+    }
+    
+    // Arduino IDE style: "portName (deviceInfo)"
+    if (deviceInfo) {
+      return `${portName} (${deviceInfo})`;
+    }
+    
+    return portName;
   };
   
-  // Helper to add a class if this is an Apple device
-  const getPortClass = (port: SerialPort) => {
-    if (port.isAppleDevice) {
-      return "text-green-400"; // Highlight Apple devices in green
+  // Get port category for grouping and styling (like Arduino IDE)
+  const getPortCategory = (port: SerialPort): string => {
+    if (port.manufacturer?.toLowerCase().includes('arduino') || 
+        port.path.toLowerCase().includes('arduino')) {
+      return 'arduino';
     }
-    return "";
+    
+    if (port.isAppleDevice) {
+      return 'apple';
+    }
+    
+    if (port.path.toLowerCase().includes('usbmodem') || 
+        port.path.toLowerCase().includes('ttyacm')) {
+      return 'microcontroller';
+    }
+    
+    if (port.path.toLowerCase().includes('usbserial') || 
+        port.path.toLowerCase().includes('ttyusb')) {
+      return 'serial';
+    }
+    
+    return 'other';
+  };
+  
+  // Style ports based on their category
+  const getPortStyle = (port: SerialPort): string => {
+    const category = getPortCategory(port);
+    
+    switch (category) {
+      case 'arduino':
+        return 'text-cyan-400 font-bold'; // Arduino devices
+      case 'apple':
+        return 'text-green-400'; // Apple devices
+      case 'microcontroller':
+        return 'text-yellow-400'; // Likely microcontrollers
+      case 'serial':
+        return 'text-orange-400'; // Serial adapters
+      default:
+        return '';
+    }
   };
 
   return (
     <div className="bg-gray-900 p-4 border border-white">
       <h2 className="text-xl uppercase font-bold mb-4">Connection</h2>
-      <div className="flex flex-col gap-3">
-        <div className="flex gap-2">
-          <select
-            id="port-select"
-            className="bg-black text-white border border-white px-3 py-2 w-full"
-            value={selectedPort}
-            onChange={(e) => setSelectedPort(e.target.value)}
-            disabled={isConnected}
-          >
-            <option value="">-- SELECT PORT --</option>
-            {availablePorts.map(port => (
-              <option 
-                key={port.path} 
-                value={port.path}
-                className={getPortClass(port)}
-              >
-                {getPortDisplay(port)}
-              </option>
-            ))}
-          </select>
+      
+      {/* Ports section */}
+      <div className="mb-4">
+        <div className="flex items-center mb-2">
+          <label className="uppercase text-sm font-bold mr-2 w-24">Port:</label>
           <button 
-            className="bg-white text-black px-3 py-1 uppercase"
-            onClick={handleRefreshPorts}
-            disabled={isConnected}
+            className={`ml-auto py-1 px-2 text-xs border border-white flex items-center ${isRefreshing ? 'animate-pulse bg-white text-black' : 'hover:bg-white hover:text-black'}`}
+            onClick={() => handleRefreshPorts()}
+            disabled={isConnected || isRefreshing}
           >
-            ↻
+            <span className={`mr-1 ${isRefreshing ? 'animate-spin' : ''}`}>⟳</span>
+            {isRefreshing ? 'Scanning...' : 'Refresh'}
           </button>
         </div>
         
-        {/* Show additional port info if selected */}
-        {selectedPort && !isConnected && (
-          <div className="text-xs text-gray-400 pl-1 -mt-2">
-            {availablePorts.find(p => p.path === selectedPort)?.manufacturer || 'Unknown device'}
+        {availablePorts.length === 0 ? (
+          <div className="text-yellow-400 py-2 border border-white border-dashed pl-2">
+            No ports available. Connect a device and click Refresh.
           </div>
-        )}
-        
-        <div className="flex gap-2">
-          <select
-            id="baud-select"
-            className="bg-black text-white border border-white px-3 py-2"
-            value={baudRate}
-            onChange={(e) => setBaudRate(parseInt(e.target.value))}
-            disabled={isConnected}
-          >
-            <option value="9600">9600</option>
-            <option value="115200">115200</option>
-            <option value="250000">250000</option>
-          </select>
-          <button
-            className="bg-white text-black px-3 py-1 uppercase flex-1 font-bold"
-            onClick={handleConnect}
-          >
-            {isConnected ? "Disconnect" : "Connect"}
-          </button>
-        </div>
-
-        {/* Connection status indicator */}
-        {isConnected && (
-          <div className="flex items-center mt-2">
-            <div className="h-3 w-3 rounded-full bg-green-500 mr-2 animate-pulse"></div>
-            <span className="text-green-400">Connected to {currentPort}</span>
+        ) : (
+          <div className="border border-white">
+            {availablePorts.map(port => (
+              <div 
+                key={port.path} 
+                className={`
+                  px-3 py-2 cursor-pointer flex items-center
+                  ${selectedPort === port.path ? 'bg-white text-black' : 'hover:bg-gray-800'} 
+                  ${selectedPort !== port.path ? getPortStyle(port) : ''}
+                  ${port.path !== availablePorts[availablePorts.length - 1].path ? 'border-b border-gray-700' : ''}
+                `}
+                onClick={() => !isConnected && setSelectedPort(port.path)}
+              >
+                <input 
+                  type="radio" 
+                  id={`port-${port.path}`}
+                  name="port-selection" 
+                  checked={selectedPort === port.path}
+                  onChange={() => setSelectedPort(port.path)}
+                  disabled={isConnected}
+                  className="mr-2"
+                />
+                <label 
+                  htmlFor={`port-${port.path}`} 
+                  className="flex-1 cursor-pointer"
+                >
+                  {formatPortDisplay(port)}
+                </label>
+              </div>
+            ))}
           </div>
         )}
       </div>
+      
+      {/* Baud rate section */}
+      <div className="mb-4">
+        <div className="flex items-center mb-2">
+          <label className="uppercase text-sm font-bold w-24">Baud Rate:</label>
+        </div>
+        
+        <div className="flex flex-wrap border border-white">
+          {[9600, 57600, 115200, 250000].map(rate => (
+            <div
+              key={rate}
+              className={`
+                px-3 py-2 cursor-pointer text-center 
+                ${baudRate === rate ? 'bg-white text-black' : 'hover:bg-gray-800'}
+                ${rate !== 250000 ? 'border-r border-gray-700' : ''}
+              `}
+              style={{ width: '25%' }}
+              onClick={() => !isConnected && setBaudRate(rate)}
+            >
+              {rate}
+            </div>
+          ))}
+        </div>
+      </div>
+      
+      {/* Connect button section */}
+      <button
+        className={`w-full py-3 uppercase font-bold text-center ${
+          isConnected 
+            ? 'bg-red-600 hover:bg-red-700' 
+            : 'bg-white text-black hover:bg-gray-200'
+        }`}
+        onClick={handleConnect}
+      >
+        {isConnected ? "Disconnect" : "Connect"}
+      </button>
+
+      {/* Connection status indicator */}
+      {isConnected && (
+        <div className="flex items-center mt-3 border border-green-500 p-2 bg-green-900 bg-opacity-30">
+          <div className="h-3 w-3 rounded-full bg-green-500 mr-2 animate-pulse"></div>
+          <span className="text-green-400">Connected to: <span className="font-mono">{currentPort}</span></span>
+        </div>
+      )}
     </div>
   );
 }
