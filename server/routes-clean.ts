@@ -4,7 +4,7 @@ import { WebSocketServer } from 'ws';
 import { WebSocket } from 'ws';
 import { storage } from "./storage";
 import { log } from "./vite";
-import { plotterSerial } from "./serial";
+import { plotterSerial } from "./serial-clean";
 import { ClientToServerEvents, ServerToClientEvents, PlotterState } from "@shared/types";
 
 export async function registerRoutes(app: Express): Promise<Server> {
