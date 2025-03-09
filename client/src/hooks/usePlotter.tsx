@@ -230,16 +230,26 @@ export const PlotterProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   // Connect to serial port
   const connectToPort = useCallback(async (port: string, baudRate: number): Promise<boolean> => {
+    console.log("connectToPort called with:", { port, baudRate });
+    
     if (!socket) {
+      console.error("WebSocket not connected in connectToPort");
       throw new Error('WebSocket not connected');
     }
     
-    socket.send(JSON.stringify({
+    console.log("WebSocket state:", socket.readyState);
+    console.log("WebSocket is open:", socket.readyState === WebSocket.OPEN);
+    
+    const message = JSON.stringify({
       type: 'connect_to_port',
       port,
       baudRate
-    }));
+    });
     
+    console.log("Sending message:", message);
+    socket.send(message);
+    
+    console.log("Message sent successfully");
     return true;
   }, [socket]);
 

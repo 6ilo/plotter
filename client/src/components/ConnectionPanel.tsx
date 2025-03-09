@@ -108,10 +108,25 @@ export default function ConnectionPanel() {
   };
 
   const handleConnect = async () => {
+    console.log("Connect button clicked");
+    console.log("Current state:", { isConnected, selectedPort, baudRate });
+    
     if (isConnected) {
-      await disconnectFromPort();
+      console.log("Attempting to disconnect...");
+      try {
+        await disconnectFromPort();
+        console.log("Disconnected successfully");
+      } catch (error) {
+        console.error("Disconnect error:", error);
+        toast({
+          title: "Disconnect Failed",
+          description: "Could not disconnect from device",
+          variant: "destructive"
+        });
+      }
     } else {
       if (!selectedPort) {
+        console.log("No port selected");
         toast({
           title: "Error",
           description: "No port selected",
@@ -120,9 +135,12 @@ export default function ConnectionPanel() {
         return;
       }
 
+      console.log(`Attempting to connect to ${selectedPort} at ${baudRate} baud...`);
       try {
-        await connectToPort(selectedPort, baudRate);
+        const result = await connectToPort(selectedPort, baudRate);
+        console.log("Connect result:", result);
       } catch (error: any) {
+        console.error("Connection error:", error);
         toast({
           title: "Connection Failed",
           description: error.message || "Could not connect to device",

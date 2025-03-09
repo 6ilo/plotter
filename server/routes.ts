@@ -77,9 +77,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         switch (data.type) {
           case 'connect_to_port':
+            log(`Received connect_to_port message with data: ${JSON.stringify(data)}`, 'ws');
             if (data.port && data.baudRate) {
+              log(`Attempting to connect to ${data.port} at ${data.baudRate} baud`, 'ws');
               try {
                 const connected = await plotterSerial.connect(data.port, data.baudRate);
+                log(`Connection result: ${connected}`, 'ws');
+                
                 sendToClient(ws, 'connection_status', { 
                   connected, 
                   port: data.port, 
@@ -87,6 +91,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 });
                 
                 if (connected) {
+                  log(`Port ${data.port} connected successfully, sending state update`, 'ws');
                   sendToClient(ws, 'plotter_state', { state: PlotterState.READY });
                   sendToClient(ws, 'log_message', { 
                     type: 'info', 
@@ -94,12 +99,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   });
                 }
               } catch (error: any) {
+                log(`Connection error: ${error.message}`, 'ws');
                 sendToClient(ws, 'error', { message: `Failed to connect: ${error.message}` });
                 sendToClient(ws, 'log_message', { 
                   type: 'error', 
                   message: `Failed to connect: ${error.message}` 
                 });
               }
+            } else {
+              log(`Invalid connect_to_port message: missing port or baudRate`, 'ws');
             }
             break;
 
