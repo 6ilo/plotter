@@ -1,7 +1,7 @@
 import express, { Request, Response, NextFunction } from "express";
 import session from "express-session";
 import MemoryStore from "memorystore";
-import { registerRoutes } from "./routes-clean";
+import { registerRoutes } from "./routes";
 import { log } from "./vite";
 import { serveStatic, setupVite } from "./vite";
 

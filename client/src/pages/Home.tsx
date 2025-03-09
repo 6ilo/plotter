@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { Link } from "wouter";
 import Visualization from "@/components/Visualization";
 import ConnectionPanel from "@/components/ConnectionPanel";
 import ManualControl from "@/components/ManualControl";
@@ -9,6 +10,7 @@ import LogViewer from "@/components/LogViewer";
 import EmergencyStop from "@/components/EmergencyStop";
 import { usePlotter } from "@/hooks/usePlotter";
 import { PlotterState } from "@shared/types";
+import { Button } from "@/components/ui/button";
 
 export default function Home() {
   const { state, isConnected, connectWebSocket } = usePlotter();
@@ -37,7 +39,14 @@ export default function Home() {
                 STATE: {state || PlotterState.DISCONNECTED}
               </div>
             </div>
-            <EmergencyStop />
+            <div className="flex items-center gap-3">
+              <Link href="/local-download">
+                <Button variant="outline" size="sm" className="border-white/50 text-white hover:bg-white/10">
+                  Run Locally
+                </Button>
+              </Link>
+              <EmergencyStop />
+            </div>
           </div>
         </header>
 
