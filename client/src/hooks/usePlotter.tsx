@@ -131,101 +131,135 @@ export const PlotterProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   // Connect to WebSocket server - uses refreshPorts which uses addLogEntry
   const connectWebSocket = useCallback(() => {
+    console.log('CONNECTING WEBSOCKET (NEW IMPLEMENTATION)');
+    
+    // Close existing socket if it exists
     if (socket) {
-      // Already connected
-      return;
+      console.log('Closing existing socket connection');
+      socket.close();
+      setSocket(null);
     }
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws`;
+    console.log('WebSocket connecting to URL:', wsUrl);
     
-    const newSocket = new WebSocket(wsUrl);
-    
-    newSocket.onopen = () => {
-      console.log('WebSocket connected');
+    try {
+      const newSocket = new WebSocket(wsUrl);
+      console.log('WebSocket instance created');
+      
+      // Set socket immediately to prevent race conditions
       setSocket(newSocket);
       
-      // Request available ports
-      refreshPorts().catch(error => {
-        console.error('Error refreshing ports on WebSocket connect:', error);
+      // Setup event handlers
+      newSocket.addEventListener('open', () => {
+        console.log('WebSocket OPEN event fired');
+        
+        // Request available ports
+        refreshPorts().catch(error => {
+          console.error('Error refreshing ports on WebSocket connect:', error);
+        });
       });
-    };
-    
-    newSocket.onclose = () => {
-      console.log('WebSocket disconnected');
-      setSocket(null);
-      setIsConnected(false);
-      setState(PlotterState.DISCONNECTED);
       
-      // Try to reconnect after a delay
-      setTimeout(() => {
-        connectWebSocket();
-      }, 3000);
-    };
-    
-    newSocket.onerror = (error) => {
-      console.error('WebSocket error:', error);
-    };
-    
-    newSocket.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
+      newSocket.addEventListener('close', (event) => {
+        console.log(`WebSocket CLOSED (code: ${event.code}, reason: ${event.reason})`);
+        setSocket(null);
+        setIsConnected(false);
+        setState(PlotterState.DISCONNECTED);
         
-        if (!data.type) {
-          console.error('Invalid WebSocket message format:', data);
-          return;
+        // Try to reconnect after a delay if not closing intentionally
+        setTimeout(() => {
+          console.log('Attempting to reconnect WebSocket...');
+          connectWebSocket();
+        }, 3000);
+      });
+      
+      newSocket.addEventListener('error', (event) => {
+        console.error('WebSocket ERROR event:', event);
+        toast({
+          title: 'Connection Error',
+          description: 'WebSocket connection error. Please try refreshing the page.',
+          variant: 'destructive'
+        });
+      });
+      
+      newSocket.addEventListener('message', (event) => {
+        console.log(`WebSocket MESSAGE received:`, event.data);
+        try {
+          const data = JSON.parse(event.data);
+          
+          if (!data.type) {
+            console.error('Invalid WebSocket message format (missing type):', data);
+            return;
+          }
+          
+          console.log(`Processing message type: ${data.type}`, data);
+          
+          switch (data.type) {
+            case 'connection_status':
+              console.log('Setting connection status:', data.data.connected);
+              setIsConnected(data.data.connected);
+              if (data.data.connected && data.data.port) {
+                setCurrentPort(data.data.port);
+              } else if (!data.data.connected) {
+                setCurrentPort(null);
+              }
+              break;
+              
+            case 'plotter_state':
+              console.log('Setting plotter state:', data.data.state);
+              setState(data.data.state);
+              break;
+              
+            case 'plotter_position':
+              console.log('Received position update:', data.data);
+              setPosition(data.data);
+              // Add to path history
+              setPathHistory(prev => [...prev, { 
+                angle: data.data.angle, 
+                radius: data.data.radius 
+              }]);
+              break;
+              
+            case 'available_ports':
+              console.log('Received port list from WebSocket:', data.data);
+              setAvailablePorts(data.data);
+              break;
+              
+            case 'error':
+              console.error('Received error from server:', data.data.message);
+              toast({
+                title: 'Server Error',
+                description: data.data.message,
+                variant: 'destructive'
+              });
+              break;
+              
+            case 'log_message':
+              console.log(`Log message (${data.data.type}): ${data.data.message}`);
+              addLogEntry(
+                data.data.type, 
+                data.data.message
+              );
+              break;
+              
+            default:
+              console.warn('Unknown message type received:', data.type);
+          }
+        } catch (error) {
+          console.error('Error processing WebSocket message:', error, event.data);
         }
-        
-        switch (data.type) {
-          case 'connection_status':
-            setIsConnected(data.data.connected);
-            if (data.data.port) {
-              setCurrentPort(data.data.port);
-            }
-            break;
-            
-          case 'plotter_state':
-            setState(data.data.state);
-            break;
-            
-          case 'plotter_position':
-            setPosition(data.data);
-            // Add to path history
-            setPathHistory(prev => [...prev, { 
-              angle: data.data.angle, 
-              radius: data.data.radius 
-            }]);
-            break;
-            
-          case 'available_ports':
-            setAvailablePorts(data.data);
-            break;
-            
-          case 'error':
-            toast({
-              title: 'Error',
-              description: data.data.message,
-              variant: 'destructive'
-            });
-            break;
-            
-          case 'log_message':
-            addLogEntry(
-              data.data.type, 
-              data.data.message
-            );
-            break;
-        }
-      } catch (error) {
-        console.error('Error processing WebSocket message:', error);
-      }
-    };
-    
-    return () => {
-      if (newSocket) {
-        newSocket.close();
-      }
-    };
+      });
+      
+      console.log('All WebSocket event handlers registered');
+    } catch (error) {
+      console.error('Failed to create WebSocket:', error);
+      toast({
+        title: 'Connection Error',
+        description: 'Failed to establish WebSocket connection.',
+        variant: 'destructive'
+      });
+    }
   }, [socket, toast, refreshPorts, addLogEntry]);
 
   // Connect to serial port

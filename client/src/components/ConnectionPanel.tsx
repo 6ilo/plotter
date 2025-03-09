@@ -310,7 +310,25 @@ export default function ConnectionPanel() {
             ? 'bg-red-600 hover:bg-red-700' 
             : 'bg-white text-black hover:bg-gray-200'
         }`}
-        onClick={handleConnect}
+        onClick={() => {
+          console.log("DIRECT BUTTON CLICK");
+          if (isConnected) {
+            console.log("Disconnecting directly");
+            disconnectFromPort().catch(e => console.error("Direct disconnect error:", e));
+          } else {
+            if (!selectedPort) {
+              console.log("No port selected (direct)");
+              toast({
+                title: "Error",
+                description: "No port selected",
+                variant: "destructive"
+              });
+              return;
+            }
+            console.log(`Direct connect attempt: ${selectedPort} @ ${baudRate}`);
+            connectToPort(selectedPort, baudRate).catch(e => console.error("Direct connect error:", e));
+          }
+        }}
       >
         {isConnected ? "Disconnect" : "Connect"}
       </button>
