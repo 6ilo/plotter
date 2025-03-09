@@ -160,22 +160,23 @@ export const PlotterProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   // Refresh available serial ports
   const refreshPorts = useCallback(async (): Promise<SerialPort[]> => {
-    if (!socket) {
-      const portsResponse = await fetch('/api/ports');
-      if (portsResponse.ok) {
-        const ports = await portsResponse.json();
-        setAvailablePorts(ports);
-        return ports;
+    // Always force a fresh fetch from API to ensure we get the latest ports
+    // This helps with the mock ports in development
+    const portsResponse = await fetch('/api/ports');
+    if (portsResponse.ok) {
+      const ports = await portsResponse.json();
+      setAvailablePorts(ports);
+      
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        // Also request via WebSocket to keep things in sync
+        socket.send(JSON.stringify({
+          type: 'refresh_ports'
+        }));
       }
-      return [];
+      
+      return ports;
     }
     
-    socket.send(JSON.stringify({
-      type: 'refresh_ports'
-    }));
-    
-    // This is a bit of a hack - we should ideally wait for the response
-    // but for simplicity, we'll just return the current available ports
     return availablePorts;
   }, [socket, availablePorts]);
 
