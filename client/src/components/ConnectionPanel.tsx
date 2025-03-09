@@ -303,7 +303,106 @@ export default function ConnectionPanel() {
         </div>
       </div>
       
-      {/* Connect button section */}
+      {/* Emergency direct connection section */}
+      <div className="mb-4 mt-4 border-t border-white pt-4">
+        <h3 className="text-center text-yellow-400 mb-2">Direct Connection Controls</h3>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            className="py-2 bg-green-700 hover:bg-green-600 uppercase font-bold text-center"
+            onClick={() => {
+              console.log("MANUAL CONNECT CLICKED");
+              if (!selectedPort) {
+                toast({
+                  title: "Error",
+                  description: "No port selected",
+                  variant: "destructive"
+                });
+                return;
+              }
+              
+              // Custom connect using direct fetch API
+              fetch('/api/direct-connect', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                  port: selectedPort,
+                  baudRate: baudRate
+                })
+              })
+              .then(response => {
+                if (!response.ok) {
+                  throw new Error(`Server returned ${response.status}`);
+                }
+                return response.json();
+              })
+              .then(data => {
+                if (data.success) {
+                  toast({
+                    title: "Connected",
+                    description: `Connected to ${selectedPort}`,
+                  });
+                  // Force refresh the socket connection
+                  refreshPorts();
+                } else {
+                  throw new Error(data.error || "Failed to connect");
+                }
+              })
+              .catch(err => {
+                toast({
+                  title: "Connection Error",
+                  description: err.message,
+                  variant: "destructive"
+                });
+              });
+            }}
+          >
+            Connect
+          </button>
+          
+          <button
+            className="py-2 bg-red-700 hover:bg-red-600 uppercase font-bold text-center"
+            onClick={() => {
+              console.log("MANUAL DISCONNECT CLICKED");
+              
+              // Custom disconnect using direct fetch API
+              fetch('/api/direct-disconnect', {
+                method: 'POST'
+              })
+              .then(response => {
+                if (!response.ok) {
+                  throw new Error(`Server returned ${response.status}`);
+                }
+                return response.json();
+              })
+              .then(data => {
+                if (data.success) {
+                  toast({
+                    title: "Disconnected",
+                    description: "Successfully disconnected",
+                  });
+                  // Force refresh the socket connection
+                  refreshPorts();
+                } else {
+                  throw new Error(data.error || "Failed to disconnect");
+                }
+              })
+              .catch(err => {
+                toast({
+                  title: "Disconnect Error",
+                  description: err.message,
+                  variant: "destructive"
+                });
+              });
+            }}
+          >
+            Disconnect
+          </button>
+        </div>
+      </div>
+      
+      {/* Original connect button */}
       <button
         className={`w-full py-3 uppercase font-bold text-center ${
           isConnected 
@@ -311,13 +410,13 @@ export default function ConnectionPanel() {
             : 'bg-white text-black hover:bg-gray-200'
         }`}
         onClick={() => {
-          console.log("DIRECT BUTTON CLICK");
+          console.log("WEBSOCKET BUTTON CLICK");
           if (isConnected) {
-            console.log("Disconnecting directly");
-            disconnectFromPort().catch(e => console.error("Direct disconnect error:", e));
+            console.log("Disconnecting via WebSocket");
+            disconnectFromPort().catch(e => console.error("WebSocket disconnect error:", e));
           } else {
             if (!selectedPort) {
-              console.log("No port selected (direct)");
+              console.log("No port selected (WebSocket)");
               toast({
                 title: "Error",
                 description: "No port selected",
@@ -325,8 +424,8 @@ export default function ConnectionPanel() {
               });
               return;
             }
-            console.log(`Direct connect attempt: ${selectedPort} @ ${baudRate}`);
-            connectToPort(selectedPort, baudRate).catch(e => console.error("Direct connect error:", e));
+            console.log(`WebSocket connect attempt: ${selectedPort} @ ${baudRate}`);
+            connectToPort(selectedPort, baudRate).catch(e => console.error("WebSocket connect error:", e));
           }
         }}
       >

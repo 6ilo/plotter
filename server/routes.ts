@@ -17,6 +17,62 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: 'Failed to get ports' });
     }
   });
+  
+  // Direct connect endpoint - bypasses WebSocket
+  app.post('/api/direct-connect', async (req, res) => {
+    try {
+      log(`Direct connect request received: ${JSON.stringify(req.body)}`, 'api');
+      const { port, baudRate } = req.body;
+      
+      if (!port) {
+        log('Direct connect failed: Missing port', 'api');
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Port is required' 
+        });
+      }
+      
+      const rate = baudRate || 115200;
+      log(`Attempting direct connection to ${port} at ${rate} baud`, 'api');
+      
+      const connected = await plotterSerial.connect(port, rate);
+      log(`Direct connection result: ${connected ? 'SUCCESS' : 'FAILED'}`, 'api');
+      
+      if (connected) {
+        return res.json({ 
+          success: true, 
+          message: `Connected to ${port} at ${rate} baud` 
+        });
+      } else {
+        return res.status(500).json({ 
+          success: false, 
+          error: 'Failed to connect' 
+        });
+      }
+    } catch (error: any) {
+      log(`Direct connect error: ${error.message}`, 'api');
+      res.status(500).json({ 
+        success: false, 
+        error: error.message || 'An unknown error occurred' 
+      });
+    }
+  });
+  
+  // Direct disconnect endpoint - bypasses WebSocket
+  app.post('/api/direct-disconnect', (req, res) => {
+    try {
+      log('Direct disconnect request received', 'api');
+      plotterSerial.disconnect();
+      log('Device disconnected successfully via direct API', 'api');
+      res.json({ success: true, message: 'Disconnected successfully' });
+    } catch (error: any) {
+      log(`Direct disconnect error: ${error.message}`, 'api');
+      res.status(500).json({ 
+        success: false, 
+        error: error.message || 'An unknown error occurred' 
+      });
+    }
+  });
 
   app.get('/api/settings', async (req, res) => {
     try {
