@@ -40,6 +40,8 @@ export default function ConnectionPanel() {
       // Force the server to rescan hardware
       const ports = await refreshPorts();
       
+      console.log("Ports received in component:", ports);
+      
       // Update UI with ports
       setAvailablePorts(ports);
       
@@ -53,6 +55,11 @@ export default function ConnectionPanel() {
         toast({
           title: `Found ${ports.length} ports`,
           description: "Select a port and click Connect",
+        });
+        
+        // Debug which port we found
+        ports.forEach(port => {
+          console.log(`Port found: ${port.path} (${port.manufacturer || 'unknown manufacturer'})`);
         });
       }
       
