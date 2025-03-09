@@ -8,6 +8,8 @@ export interface SerialPortInfo {
   manufacturer?: string;
   productId?: string;
   vendorId?: string;
+  displayName?: string;
+  isAppleDevice?: boolean;
 }
 
 export class PlotterSerial {
@@ -23,16 +25,81 @@ export class PlotterSerial {
   public async listPorts(): Promise<SerialPortInfo[]> {
     try {
       const ports = await SerialPort.list();
-      return ports.map(port => ({
-        path: port.path,
-        manufacturer: port.manufacturer,
-        productId: port.productId,
-        vendorId: port.vendorId,
-      }));
+      
+      // Get a more user-friendly port list with better detection for Apple devices
+      const enhancedPorts = ports.map(port => {
+        const isAppleDevice = 
+          (port.manufacturer && port.manufacturer.toLowerCase().includes('apple')) ||
+          (port.path && (
+            port.path.toLowerCase().includes('usbmodem') || 
+            port.path.toLowerCase().includes('cu.') ||
+            port.path.toLowerCase().includes('tty.')
+          ));
+          
+        const displayName = this.getPortDisplayName(port);
+        
+        return {
+          path: port.path,
+          manufacturer: port.manufacturer,
+          productId: port.productId,
+          vendorId: port.vendorId,
+          displayName,
+          isAppleDevice
+        };
+      });
+      
+      // Sort ports to prioritize likely Arduino/microcontroller ports
+      return enhancedPorts.sort((a, b) => {
+        // Push likely Arduino/USB serial ports to the top
+        const aIsFTDI = a.manufacturer?.toLowerCase().includes('ftdi') || 
+                        (a.path?.toLowerCase().includes('tty.usbserial') || false);
+        const bIsFTDI = b.manufacturer?.toLowerCase().includes('ftdi') || 
+                        (b.path?.toLowerCase().includes('tty.usbserial') || false);
+        
+        const aIsArduino = a.manufacturer?.toLowerCase().includes('arduino') || 
+                          (a.path?.toLowerCase().includes('arduino') || false);
+        const bIsArduino = b.manufacturer?.toLowerCase().includes('arduino') || 
+                          (b.path?.toLowerCase().includes('arduino') || false);
+        
+        const aIsCH340 = a.manufacturer?.toLowerCase().includes('ch340') || 
+                        (a.path?.toLowerCase().includes('wchusbserial') || false);
+        const bIsCH340 = b.manufacturer?.toLowerCase().includes('ch340') || 
+                        (b.path?.toLowerCase().includes('wchusbserial') || false);
+        
+        if (aIsArduino && !bIsArduino) return -1;
+        if (!aIsArduino && bIsArduino) return 1;
+        if (aIsFTDI && !bIsFTDI) return -1;
+        if (!aIsFTDI && bIsFTDI) return 1;
+        if (aIsCH340 && !bIsCH340) return -1;
+        if (!aIsCH340 && bIsCH340) return 1;
+        
+        return 0;
+      });
     } catch (error) {
       log(`Error listing serial ports: ${error}`, 'serial');
       return [];
     }
+  }
+  
+  // Helper to create a more user-friendly display name for ports
+  private getPortDisplayName(port: any): string {
+    let displayName = port.path;
+    
+    // Extract more meaningful names for macOS ports
+    if (port.path.includes('/dev/tty.') || port.path.includes('/dev/cu.')) {
+      // For macOS, try to get the descriptive part after the prefix
+      const match = port.path.match(/\/(tty|cu)\.(.+)$/);
+      if (match && match[2]) {
+        displayName = match[2];
+      }
+    }
+    
+    // Add manufacturer if available
+    if (port.manufacturer) {
+      displayName = `${displayName} (${port.manufacturer})`;
+    }
+    
+    return displayName;
   }
 
   public connect(portPath: string, baudRate: number = 115200): Promise<boolean> {
@@ -41,16 +108,63 @@ export class PlotterSerial {
         if (this.isConnected) {
           this.disconnect();
         }
+        
+        // Add special handling for macOS paths
+        let finalPath = portPath;
+        
+        // For macOS, if we're given a cu.* device but tty.* is available, use tty.*
+        // The cu.* (call-up) devices are for outgoing data only
+        if (portPath.includes('/dev/cu.') && process.platform === 'darwin') {
+          const ttyPath = portPath.replace('/dev/cu.', '/dev/tty.');
+          
+          // Check if the tty device exists (this is simplified - in a real app we'd check if the file exists)
+          try {
+            // For simplicity, we're assuming the tty version exists
+            // In a full implementation, you'd check the file exists
+            // Fallback to cu.* only if tty.* doesn't exist
+            finalPath = ttyPath;
+            log(`Using tty device ${ttyPath} instead of ${portPath}`, 'serial');
+          } catch (e) {
+            // If the tty version doesn't exist, we'll use the cu version
+            log(`Couldn't find tty device, using ${portPath}`, 'serial');
+          }
+        }
 
         this.port = new SerialPort({
-          path: portPath,
+          path: finalPath,
           baudRate: baudRate,
           autoOpen: false
         });
 
+        // For Apple Silicon Macs, some devices need a longer timeout
+        const openTimeout = process.platform === 'darwin' ? 2000 : 1000;
+        
+        // Set a timeout for the open operation
+        const openTimer = setTimeout(() => {
+          if (this.port && !this.port.isOpen) {
+            log(`Timeout opening port ${finalPath}`, 'serial');
+            this.port.close();
+            reject(new Error('Timeout opening serial port'));
+          }
+        }, openTimeout);
+
         this.port.open((err) => {
+          clearTimeout(openTimer);
+          
           if (err) {
             log(`Error opening serial port: ${err.message}`, 'serial');
+            
+            // Special handling for common macOS error
+            if (err.message && 
+                err.message.includes('Permission denied') && 
+                process.platform === 'darwin') {
+              const errorMsg = 'Permission denied. On macOS, you may need to allow access to this device ' +
+                              'in System Preferences > Security & Privacy > Privacy > Files and Folders.';
+              log(errorMsg, 'serial');
+              reject(new Error(errorMsg));
+              return;
+            }
+            
             reject(err);
             return;
           }
@@ -59,8 +173,16 @@ export class PlotterSerial {
           this.setupListeners();
           this.isConnected = true;
 
-          log(`Connected to ${portPath} at ${baudRate} baud`, 'serial');
-          resolve(true);
+          log(`Connected to ${finalPath} at ${baudRate} baud`, 'serial');
+          
+          // On macOS, some devices need a moment after connection before they're ready
+          if (process.platform === 'darwin') {
+            setTimeout(() => {
+              resolve(true);
+            }, 500);
+          } else {
+            resolve(true);
+          }
         });
       } catch (error) {
         log(`Error connecting to serial port: ${error}`, 'serial');

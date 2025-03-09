@@ -36,6 +36,8 @@ export interface SerialPort {
   manufacturer?: string;
   productId?: string;
   vendorId?: string;
+  displayName?: string;
+  isAppleDevice?: boolean;
 }
 
 // WebSocket Message Types

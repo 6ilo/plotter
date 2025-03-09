@@ -1,9 +1,11 @@
 import { useState, useEffect } from "react";
 import { usePlotter } from "@/hooks/usePlotter";
 import { useToast } from "@/hooks/use-toast";
+import { SerialPort } from "@shared/types";
 
 export default function ConnectionPanel() {
-  const [availablePorts, setAvailablePorts] = useState<string[]>([]);
+  // Replace string array with SerialPort array to store more port information
+  const [availablePorts, setAvailablePorts] = useState<SerialPort[]>([]);
   const [selectedPort, setSelectedPort] = useState<string>("");
   const [baudRate, setBaudRate] = useState<number>(115200);
   
@@ -18,7 +20,7 @@ export default function ConnectionPanel() {
   const handleRefreshPorts = async () => {
     try {
       const ports = await refreshPorts();
-      setAvailablePorts(ports.map(port => port.path));
+      setAvailablePorts(ports);
       
       if (ports.length > 0 && !selectedPort) {
         setSelectedPort(ports[0].path);
@@ -56,6 +58,24 @@ export default function ConnectionPanel() {
       }
     }
   };
+  
+  // Helper to get a friendly display name for a port
+  const getPortDisplay = (port: SerialPort) => {
+    if (port.displayName) {
+      return port.displayName;
+    }
+    
+    // If no display name is set, use the path
+    return port.path;
+  };
+  
+  // Helper to add a class if this is an Apple device
+  const getPortClass = (port: SerialPort) => {
+    if (port.isAppleDevice) {
+      return "text-green-400"; // Highlight Apple devices in green
+    }
+    return "";
+  };
 
   return (
     <div className="bg-gray-900 p-4 border border-white">
@@ -71,7 +91,13 @@ export default function ConnectionPanel() {
           >
             <option value="">-- SELECT PORT --</option>
             {availablePorts.map(port => (
-              <option key={port} value={port}>{port}</option>
+              <option 
+                key={port.path} 
+                value={port.path}
+                className={getPortClass(port)}
+              >
+                {getPortDisplay(port)}
+              </option>
             ))}
           </select>
           <button 
@@ -82,6 +108,14 @@ export default function ConnectionPanel() {
             ↻
           </button>
         </div>
+        
+        {/* Show additional port info if selected */}
+        {selectedPort && !isConnected && (
+          <div className="text-xs text-gray-400 pl-1 -mt-2">
+            {availablePorts.find(p => p.path === selectedPort)?.manufacturer || 'Unknown device'}
+          </div>
+        )}
+        
         <div className="flex gap-2">
           <select
             id="baud-select"
@@ -101,6 +135,14 @@ export default function ConnectionPanel() {
             {isConnected ? "Disconnect" : "Connect"}
           </button>
         </div>
+
+        {/* Connection status indicator */}
+        {isConnected && (
+          <div className="flex items-center mt-2">
+            <div className="h-3 w-3 rounded-full bg-green-500 mr-2 animate-pulse"></div>
+            <span className="text-green-400">Connected to {currentPort}</span>
+          </div>
+        )}
       </div>
     </div>
   );
