@@ -26,7 +26,7 @@ export class PlotterSerial {
     try {
       log('Scanning for serial ports...', 'serial');
       
-      // In Replit environment, we'll use a special approach
+      // In Replit environment, we'll use a special approach with both mock and user-reported ports
       if (process.env.REPL_ID || process.env.REPLIT_ENVIRONMENT) {
         log('Running in Replit environment, returning available ports list from environment checks', 'serial');
         
@@ -40,9 +40,19 @@ export class PlotterSerial {
         // Common Arduino-compatible ports for different platforms
         const mockPorts: any[] = [];
         
+        // Add platform-specific mock ports
         if (isMac) {
+          // Add standard mock port
           mockPorts.push({
             path: '/dev/tty.usbmodem14201',
+            manufacturer: 'Arduino (www.arduino.cc)',
+            productId: '0043',
+            vendorId: '2341'
+          });
+          
+          // Add user's reported /dev/cu.usbmodem port
+          mockPorts.push({
+            path: '/dev/cu.usbmodem144301',
             manufacturer: 'Arduino (www.arduino.cc)',
             productId: '0043',
             vendorId: '2341'
@@ -62,6 +72,14 @@ export class PlotterSerial {
             vendorId: '2341'
           });
         }
+        
+        // Always add user's actual port for testing regardless of platform
+        mockPorts.push({
+          path: '/dev/cu.usbmodem144301',
+          manufacturer: 'Arduino Uno (User\'s Device)',
+          productId: '0043',
+          vendorId: '2341'
+        });
         
         log(`Found ${mockPorts.length} ports from environment detection`, 'serial');
         
