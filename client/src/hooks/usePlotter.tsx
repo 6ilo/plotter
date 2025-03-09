@@ -99,6 +99,16 @@ export const PlotterProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const ports = await portsResponse.json();
       console.log('Ports received:', ports);
       
+      // Debug raw response
+      if (ports && Array.isArray(ports)) {
+        console.log(`Found ${ports.length} ports in API response`);
+        ports.forEach(port => {
+          console.log(`Port: ${port.path}, Manufacturer: ${port.manufacturer || 'unknown'}`);
+        });
+      } else {
+        console.error('API returned non-array response:', ports);
+      }
+      
       // Update state with the fresh ports
       setAvailablePorts(ports);
       

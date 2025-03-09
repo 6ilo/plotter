@@ -37,12 +37,19 @@ export default function ConnectionPanel() {
     }
     
     try {
-      // Force the server to rescan hardware
-      const ports = await refreshPorts();
+      // Directly fetch ports from API to ensure we get the latest data
+      const response = await fetch('/api/ports');
+      if (!response.ok) {
+        throw new Error(`Failed to fetch ports: ${response.statusText}`);
+      }
       
-      console.log("Ports received in component:", ports);
+      const ports = await response.json();
+      console.log("Direct API response:", ports);
       
-      // Update UI with ports
+      // Force refresh through the plotter hook as well (for WebSocket updates)
+      refreshPorts().catch(err => console.error("Error in hook refreshPorts:", err));
+      
+      // Update UI with ports directly from API
       setAvailablePorts(ports);
       
       if (ports.length === 0 && !silent) {
