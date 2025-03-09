@@ -179,30 +179,39 @@ export class PlotterSerial {
           // Setup a mock connection
           this.isConnected = true;
           
+          log(`Mock connection established for ${portPath}`, 'serial');
+          
+          // Send immediate connected event
+          if (this.messageCallback) {
+            this.messageCallback('info', `Connected to ${portPath} at ${baudRate} baud (mock mode)`);
+          }
+          
           // Simulate device ready message
           if (this.messageCallback) {
             setTimeout(() => {
+              log(`Simulating device ready message`, 'serial');
               this.messageCallback!('received', 'STATE_READY');
               if (this.stateCallback) {
                 this.stateCallback(PlotterState.READY);
               }
-            }, 500);
+            }, 200);
             
             // Simulate initial position report
             setTimeout(() => {
-              this.messageCallback!('received', 'Status - Polar: Angle=0.0 Radius=0.0 X=0.0 Y=0.0');
+              log(`Simulating initial position report`, 'serial');
+              this.messageCallback!('received', 'Status - Polar: Angle=0.0 Radius=150.0 X=150.0 Y=0.0');
               if (this.positionCallback) {
                 this.positionCallback({
                   angle: 0,
-                  radius: 0,
-                  x: 0,
+                  radius: 150,
+                  x: 150,
                   y: 0
                 });
               }
-            }, 1000);
+            }, 400);
           }
           
-          log(`Connected to ${portPath} at ${baudRate} baud (mock mode)`, 'serial');
+          log(`Successfully connected to ${portPath} at ${baudRate} baud (mock mode)`, 'serial');
           resolve(true);
           return;
         }
@@ -290,19 +299,48 @@ export class PlotterSerial {
   }
 
   public disconnect(): void {
+    log('Disconnecting from port', 'serial');
+    
+    // Special handling for Replit environment
+    if (process.env.REPL_ID || process.env.REPLIT_ENVIRONMENT) {
+      log('Disconnecting mock serial connection', 'serial');
+      
+      // For mock connection, just reset the connection state
+      this.isConnected = false;
+      
+      // Send notifications about disconnection
+      if (this.messageCallback) {
+        this.messageCallback('info', 'Disconnected from device (mock mode)');
+      }
+      
+      if (this.stateCallback) {
+        this.stateCallback(PlotterState.DISCONNECTED);
+      }
+      
+      log('Mock connection disconnected successfully', 'serial');
+      return;
+    }
+    
+    // Real hardware disconnect
     if (this.port && this.port.isOpen) {
+      log('Closing physical serial port connection', 'serial');
       this.port.close((err) => {
         if (err) {
           log(`Error closing serial port: ${err.message}`, 'serial');
         } else {
-          log('Serial port closed', 'serial');
+          log('Serial port closed successfully', 'serial');
         }
       });
+    } else {
+      log('No open port to disconnect from', 'serial');
     }
 
+    // Reset all connection state
     this.port = null;
     this.parser = null;
     this.isConnected = false;
+    
+    log('Disconnection complete', 'serial');
   }
 
   public isPortConnected(): boolean {
