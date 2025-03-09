@@ -25,13 +25,14 @@ export class MemStorage implements IStorage {
     this.settingsCurrentId = 1;
     
     // Add default settings
-    this.createPlotterSettings({
+    // Using void to ignore the Promise since we're in the constructor
+    void this.createPlotterSettings({
       name: "Default Settings",
       angularMaxSpeed: "600",
       angularAccel: "150",
       radialMaxSpeed: "600",
       radialAccel: "150",
-      isDefault: true
+      isDefault: true as const // Use const assertion to satisfy TypeScript
     });
   }
 
@@ -68,13 +69,21 @@ export class MemStorage implements IStorage {
 
   async createPlotterSettings(insertSettings: InsertPlotterSettings): Promise<PlotterSettings> {
     const id = this.settingsCurrentId++;
-    const settings: PlotterSettings = { ...insertSettings, id };
+    // Ensure isDefault is defined and is a boolean
+    const isDefault = insertSettings.isDefault === true;
+    const settings: PlotterSettings = { 
+      ...insertSettings, 
+      id,
+      isDefault // Explicitly set isDefault as boolean
+    };
     
     // If this is set as default, update other settings
     if (settings.isDefault) {
-      for (const [key, existingSettings] of this.settings.entries()) {
-        if (existingSettings.isDefault) {
-          this.settings.set(key, { ...existingSettings, isDefault: false });
+      // Use Array.from to avoid iterator issues
+      const existingSettings = Array.from(this.settings.entries());
+      for (const [key, setting] of existingSettings) {
+        if (setting.isDefault) {
+          this.settings.set(key, { ...setting, isDefault: false });
         }
       }
     }
