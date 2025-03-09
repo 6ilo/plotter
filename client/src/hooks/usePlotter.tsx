@@ -60,8 +60,66 @@ export const PlotterProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [availablePorts, setAvailablePorts] = useState<SerialPort[]>([]);
   
   const { toast } = useToast();
+  
+  // Add log entry function
+  const addLogEntry = useCallback((type: string, message: string) => {
+    setLogEntries(prev => [
+      ...prev, 
+      { 
+        type: type as any, 
+        message, 
+        timestamp: new Date() 
+      }
+    ]);
+  }, []);
 
-  // Connect to WebSocket server
+  // Clear path history
+  const clearPathHistory = useCallback(() => {
+    setPathHistory([]);
+    addLogEntry('info', 'Path history cleared');
+  }, [addLogEntry]);
+
+  // Clear log
+  const clearLog = useCallback(() => {
+    setLogEntries([]);
+  }, []);
+
+  // Refresh available serial ports - uses addLogEntry
+  const refreshPorts = useCallback(async (): Promise<SerialPort[]> => {
+    try {
+      console.log('Refreshing ports...');
+      // Always force a fresh fetch from API to ensure we get the latest ports
+      const portsResponse = await fetch('/api/ports');
+      
+      if (!portsResponse.ok) {
+        console.error('Failed to fetch ports from API:', portsResponse.statusText);
+        return availablePorts;
+      }
+      
+      const ports = await portsResponse.json();
+      console.log('Ports received:', ports);
+      
+      // Update state with the fresh ports
+      setAvailablePorts(ports);
+      
+      // Also notify the backend to sync up
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({
+          type: 'refresh_ports'
+        }));
+      }
+      
+      addLogEntry('info', `Found ${ports.length} port(s)`);
+      
+      return ports;
+    } catch (error) {
+      console.error('Error refreshing ports:', error);
+      addLogEntry('error', `Error scanning ports: ${error}`);
+      return availablePorts;
+    }
+  }, [socket, availablePorts, addLogEntry]);
+
+  // Connect to WebSocket server - uses refreshPorts which uses addLogEntry
   const connectWebSocket = useCallback(() => {
     if (socket) {
       // Already connected
@@ -78,7 +136,9 @@ export const PlotterProvider: React.FC<{ children: React.ReactNode }> = ({ child
       setSocket(newSocket);
       
       // Request available ports
-      refreshPorts();
+      refreshPorts().catch(error => {
+        console.error('Error refreshing ports on WebSocket connect:', error);
+      });
     };
     
     newSocket.onclose = () => {
@@ -156,29 +216,7 @@ export const PlotterProvider: React.FC<{ children: React.ReactNode }> = ({ child
         newSocket.close();
       }
     };
-  }, [socket, toast]);
-
-  // Refresh available serial ports
-  const refreshPorts = useCallback(async (): Promise<SerialPort[]> => {
-    // Always force a fresh fetch from API to ensure we get the latest ports
-    // This helps with the mock ports in development
-    const portsResponse = await fetch('/api/ports');
-    if (portsResponse.ok) {
-      const ports = await portsResponse.json();
-      setAvailablePorts(ports);
-      
-      if (socket && socket.readyState === WebSocket.OPEN) {
-        // Also request via WebSocket to keep things in sync
-        socket.send(JSON.stringify({
-          type: 'refresh_ports'
-        }));
-      }
-      
-      return ports;
-    }
-    
-    return availablePorts;
-  }, [socket, availablePorts]);
+  }, [socket, toast, refreshPorts, addLogEntry]);
 
   // Connect to serial port
   const connectToPort = useCallback(async (port: string, baudRate: number): Promise<boolean> => {
@@ -221,27 +259,11 @@ export const PlotterProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }));
   }, [socket]);
 
-  // Add log entry
-  const addLogEntry = useCallback((type: string, message: string) => {
-    setLogEntries(prev => [
-      ...prev, 
-      { 
-        type: type as any, 
-        message, 
-        timestamp: new Date() 
-      }
-    ]);
-  }, []);
-
-  // Clear path history
-  const clearPathHistory = useCallback(() => {
-    setPathHistory([]);
-    addLogEntry('info', 'Path history cleared');
-  }, [addLogEntry]);
-
-  // Clear log
-  const clearLog = useCallback(() => {
-    setLogEntries([]);
+  // Connect to WebSocket on component mount
+  useEffect(() => {
+    connectWebSocket();
+    // This is intentional - we only want to connect once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (

@@ -24,53 +24,18 @@ export class PlotterSerial {
 
   public async listPorts(): Promise<SerialPortInfo[]> {
     try {
-      // Try to get real ports first
+      // Get real ports only - no mocks
+      log('Scanning for serial ports...', 'serial');
       const ports = await SerialPort.list();
       
-      // Include mock ports for demo in Replit environment (or when no real ports available)
-      const includeMockPorts = ports.length === 0 || process.env.NODE_ENV !== 'production';
+      // Log the detected ports for debugging
+      log(`Found ${ports.length} ports:`, 'serial');
+      ports.forEach(port => {
+        log(`  - ${port.path} (${port.manufacturer || 'Unknown manufacturer'})`, 'serial');
+      });
       
-      // Create array to hold all ports (real + mock if needed)
+      // Create array to hold all ports
       let allPorts = [...ports];
-      
-      // Add mock ports for demonstration when no real hardware is connected
-      if (includeMockPorts) {
-        const mockPorts = [
-          {
-            path: '/dev/tty.usbmodem14201',
-            manufacturer: 'Arduino (www.arduino.cc)',
-            productId: '0043',
-            vendorId: '2341'
-          },
-          {
-            path: '/dev/cu.usbserial-A6004byf',
-            manufacturer: 'FTDI',
-            productId: '6001',
-            vendorId: '0403'
-          },
-          {
-            path: '/dev/tty.wchusbserial14240',
-            manufacturer: 'wch.cn',
-            productId: '55d4',
-            vendorId: '1a86'
-          },
-          {
-            path: '/dev/tty.Bluetooth-Incoming-Port',
-            manufacturer: 'Apple Inc.',
-            productId: '8006',
-            vendorId: '05ac'
-          },
-          {
-            path: 'COM3',
-            manufacturer: 'Microsoft',
-            productId: '7523',
-            vendorId: '1a86'
-          }
-        ];
-        
-        // Add the mock ports to our list
-        allPorts = [...allPorts, ...mockPorts];
-      }
       
       // Get a more user-friendly port list with better detection for Apple devices
       const enhancedPorts = allPorts.map(port => {

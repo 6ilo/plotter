@@ -29,11 +29,32 @@ export default function ConnectionPanel() {
   const handleRefreshPorts = async (silent = false) => {
     if (!silent) {
       setIsRefreshing(true);
+      // Add a toast notification to show the user we're working on it
+      toast({
+        title: "Scanning ports...",
+        description: "Looking for connected devices",
+      });
     }
     
     try {
+      // Force the server to rescan hardware
       const ports = await refreshPorts();
+      
+      // Update UI with ports
       setAvailablePorts(ports);
+      
+      if (ports.length === 0 && !silent) {
+        toast({
+          title: "No ports found",
+          description: "Make sure your device is connected and drivers are installed",
+          variant: "destructive"
+        });
+      } else if (ports.length > 0 && !silent) {
+        toast({
+          title: `Found ${ports.length} ports`,
+          description: "Select a port and click Connect",
+        });
+      }
       
       // If we have an Arduino-like port, prioritize it
       const arduinoPort = ports.find(p => 
@@ -61,7 +82,7 @@ export default function ConnectionPanel() {
       if (!silent) {
         toast({
           title: "Error",
-          description: "Failed to refresh ports",
+          description: "Failed to refresh ports. Please try again.",
           variant: "destructive"
         });
       }
